@@ -4,7 +4,7 @@ var q = require('queue-async'),
     util = require('util'),
     events = require('events'),
     SPI = require('pi-spi'),
-    GPIO = require('pi-pins'),
+    MRAA = require('mraa'),
     _m = require("./magicnums");
 
 var mutex = fifo();   // HACK: avoid https://github.com/natevw/node-nrf/commit/8d80dabde1026e949f4eb4ea6d25624cbf3c70ec
@@ -29,8 +29,11 @@ exports.connect = function (spi,ce,irq) {
     var _spi = spi, _ce = ce, _irq = irq;       // only for printDetails!
     var nrf = new events.EventEmitter(),
         spi = SPI.initialize(spi),
-        ce = GPIO.connect(ce),
-        irq = (arguments.length > 2) && GPIO.connect(irq);
+        ce = new MRAA.Gpio(ce),
+        irq = (arguments.length > 2) && new MRAA.Gpio(irq);
+
+    ce.dir(MRAA.DIR_OUT);
+    irq.dir(MRAA.DIR_IN);
     
     nrf._T = _extend({}, _m.TIMING, {pd2stby:4500});        // may need local override of pd2stby
     
@@ -173,8 +176,12 @@ exports.connect = function (spi,ce,irq) {
     };
     
     nrf.setCE = function (state, block) {
-        if (typeof state === 'string') ce.mode(state);
-        else ce.value(state);
+        if (typeof state === 'string') {
+						if (state == "low")
+								ce.mode(MRAA.MODE_PULLDOWN);
+            else if (state == "high")
+                ce.mode(MRAA.MODE_PULLUP);
+				} else ce.write(state);
         if (nrf._debug) console.log("Set CE "+state+".");
         if (block) nrf.blockMicroseconds(nrf._T[block]);       // (assume ce changed TX/RX mode)
     };
@@ -390,8 +397,8 @@ exports.connect = function (spi,ce,irq) {
     nrf._irqOn = function () {
         if (irqOn) return;
         else if (irq) {
-            irq.mode('in');
-            irq.addListener('fall', irqListener);
+            irq.dir(MRAA.DIR_IN);
+            irq.isr(MRAA.EDGE_FALLING, irqListener);
         } else {
             console.warn("Recommend use with IRQ pin, fallback handling is suboptimal.");
             irqListener = setInterval(function () {       // TODO: clear interval when there are no listeners?
@@ -402,7 +409,7 @@ exports.connect = function (spi,ce,irq) {
     };
     nrf._irqOff = function () {
         if (!irqOn) return;
-        else if (irq) irq.removeListener('fall', irqListener);
+        else if (irq){ // irq.removeListener('fall', irqListener);}
         else clearInterval(irqListener);
         irqOn = false;
     };
